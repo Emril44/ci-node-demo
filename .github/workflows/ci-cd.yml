@@ -80,6 +80,12 @@ jobs:
           # Prune stopped containers to prevent leftover conflicts
           sudo docker container prune -f
 
+          if [ ! -d "nodeapp" ]; then
+            git clone https://github.com/<USERNAME>/<NEW_REPO>.git nodeapp
+          else
+            cd nodeapp && git pull origin main && cd ..
+          fi
+
           cd nodeapp
           sudo lsof -t -i:3000 | xargs -r sudo kill -9
 
