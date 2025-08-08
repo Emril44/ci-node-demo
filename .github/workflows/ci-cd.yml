@@ -81,7 +81,7 @@ jobs:
           sudo docker container prune -f
 
           if [ ! -d "nodeapp" ]; then
-            git clone https://github.com/<USERNAME>/<NEW_REPO>.git nodeapp
+            git clone https://github.com/Emril44/ci-node-demo.git nodeapp
           else
             cd nodeapp && git pull origin main && cd ..
           fi
