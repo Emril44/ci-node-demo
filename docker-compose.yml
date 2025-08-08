@@ -1,0 +1,23 @@
+services:
+  app:
+    image: emril44/nodeapp:${IMAGE_TAG}
+    ports:
+      - '3001:3001'
+    depends_on:
+      - db
+    volumes:
+      - .:/app
+    environment:
+      - NODE_ENV=development
+
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: mydb
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:

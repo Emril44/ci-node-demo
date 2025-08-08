@@ -1,0 +1,93 @@
+name: Node CI/CD
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run build script
+        run: npm run build
+
+      - name: Log in to Docker Hub
+        run: echo "${{ secrets.DOCKER_TOKEN }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+
+      - name: Generate Docker image tags
+        id: tag
+        run: |
+          echo "IMAGE_TAG=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+          echo "BRANCH_TAG=$(echo ${GITHUB_REF##*/})" >> $GITHUB_ENV
+
+      - name: Build Docker image
+        run: |
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/nodeapp:${{ env.IMAGE_TAG }} .
+          docker tag ${{ secrets.DOCKER_USERNAME }}/nodeapp:${{ env.IMAGE_TAG }} ${{ secrets.DOCKER_USERNAME }}/nodeapp:${{ env.BRANCH_TAG }}
+
+      - name: Push Docker image
+        run: |
+          docker push ${{ secrets.DOCKER_USERNAME }}/nodeapp:${{ env.IMAGE_TAG }}
+          docker push ${{ secrets.DOCKER_USERNAME }}/nodeapp:${{ env.BRANCH_TAG }}
+
+      - name: Decode SSH key
+        run: |
+          echo "${{ secrets.EC2_SSH_KEY_B64 }}" | base64 -d > ec2-key.pem
+          chmod 600 ec2-key.pem
+
+      - name: Deploy container to EC2
+        run: |
+          ssh -i ec2-key.pem -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << EOF
+          # Install Docker (if needed)
+          if ! command -v docker &> /dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y \
+              ca-certificates \
+              curl \
+              gnupg \
+              lsb-release
+
+            sudo install -m 0755 -d /etc/apt/keyrings
+            curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
+              sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+
+            echo \
+              "deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+              https://download.docker.com/linux/ubuntu \
+              \$(lsb_release -cs) stable" | \
+              sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+            sudo apt-get update
+            sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+          fi
+
+          # Stop and remove all containers using port 3000
+          sudo docker ps --format '{{.ID}} {{.Ports}}' | grep '0.0.0.0:3000->' | awk '{print $1}' | xargs -r sudo docker rm -f
+
+          # Prune unused networks just in case
+          sudo docker network prune -f
+
+          # Prune stopped containers to prevent leftover conflicts
+          sudo docker container prune -f
+
+          cd nodeapp
+          sudo lsof -t -i:3000 | xargs -r sudo kill -9
+
+          # Pull and run the latest image
+          sudo docker pull ${{ secrets.DOCKER_USERNAME }}/nodeapp:${{ env.IMAGE_TAG }}
+          sudo docker compose down || true
+          sudo IMAGE_TAG=${{ env.IMAGE_TAG }} docker compose up -d
+
+          # Output last logs for verification
+          sudo docker compose logs app --tail=20
+          EOF
